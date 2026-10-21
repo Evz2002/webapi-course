@@ -1,41 +1,51 @@
 var builder = WebApplication.CreateBuilder(args);
-
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
-
 var app = builder.Build();
+var storeName = app.Configuration["StoreSettings:StoreName"] ?? "Unknown Store";
+var supportedApiVersion = app.Configuration["StoreSettings:SupportedApiVersion"] ?? "v1";
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+app.Use(async (context, next) =>
 {
-    app.MapOpenApi();
-}
-
-app.UseHttpsRedirection();
-
-var summaries = new[]
+    context.Response.Headers["X-Store-Name"] = storeName;
+    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {context.Request.Method} {context.Request.Path}");
+    await next();
+});
+app.Map("/store-info", storeInfoApp =>
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
+    storeInfoApp.Run(async context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new
+        {
+            storeName = storeName,
+            supportedApiVersion = supportedApiVersion
+        });
+    });
+});
+app.Use(async (context, next) =>
 {
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
-
+    if (!context.Request.Headers.TryGetValue("X-Api-Version", out var version) ||
+        version != supportedApiVersion)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new
+        {
+            error = "Invalid or missing X-Api-Version header.",
+            expectedVersion = supportedApiVersion,
+            receivedVersion = version.ToString() ?? "(none)"
+        });
+        return;
+    }
+    await next();
+});
+app.Run(async context =>
+{
+    context.Response.StatusCode = StatusCodes.Status200OK;
+    context.Response.ContentType = "application/json";
+    await context.Response.WriteAsJsonAsync(new
+    {
+        message = "Welcome to the Store API! Your request is valid."
+    });
+});
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
